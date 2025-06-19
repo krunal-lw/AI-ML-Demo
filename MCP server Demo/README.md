@@ -2,6 +2,10 @@
 This AI tool helps an HR with leave management related tasks. The codebase here 
 is for MCP server that interacts with mock leave database and responds to MCP client queries
 
+
+first install python library
+pip install mcp
+
 # Setup steps
 1. Install Claude Desktop
 2. Install uv by running `pip install uv`
