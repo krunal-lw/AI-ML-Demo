@@ -1,14 +1,5 @@
-# Basic Chat Agent using NLP
+# Basic Office chat Agent NLP
 
-## 📁 Project Structure
-
-```
-Basic Chat Agent/
-│
-├── main.py                      # Main implementation in Jupyter Notebook
-├── requirements.txt             # Python dependencies
-└── README.md                    # Project documentation
-```
 
 ## 🚀 Getting Started
 
@@ -16,7 +7,7 @@ Basic Chat Agent/
 
 ```bash
 git clone https://github.com/krunal-lw/AI-ML-Demo.git
-cd AI-ML-Demo/Basic\ Chat\ Agent
+cd AI-ML-Demo/Office\ Chat\ Agent
 ```
 
 ### 2. Set Up Virtual Environment (Optional but Recommended)
