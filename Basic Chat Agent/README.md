@@ -76,9 +76,12 @@ Step 5: Update Your .env File with the Path to the JSON Key File
 ### 4. Run the Chat Agent
 
 ```bash
-python main.py
+python Chat_Agent.py
 ```
-
+### 5. Run Front End
+```bash
+npm install vite
+npm run dev
 ## 🤝 Contributing
 
 Feel free to fork the repository, make improvements, and submit a pull request.
