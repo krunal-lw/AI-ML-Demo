@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Download, Bot, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -70,30 +69,30 @@ const ChatMessage = ({ message, isLatest = false }: ChatMessageProps) => {
         <div
           className={`px-4 py-3 rounded-2xl ${
             isBot
-              ? 'bg-white border border-gray-200 text-gray-800'
-              : 'bg-blue-500 text-white'
+              ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200'
+              : 'bg-blue-500 dark:bg-blue-600 text-white'
           } shadow-sm`}
         >
           <div className="flex items-start gap-2">
             {isBot && (
               <div className="flex-shrink-0 mt-1">
-                <Bot size={16} className="text-blue-500" />
+                <Bot size={16} className="text-blue-500 dark:text-blue-400" />
               </div>
             )}
             <div className="flex-1">
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 {displayedText}
                 {isTyping && (
-                  <span className="inline-block w-2 h-4 bg-gray-400 ml-1 animate-pulse" />
+                  <span className="inline-block w-2 h-4 bg-gray-400 dark:bg-gray-500 ml-1 animate-pulse" />
                 )}
               </p>
               
               {message.file_generated && message.download_url && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
+                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
                   <Button
                     onClick={() => handleDownload(message.download_url!, message.filename!)}
                     size="sm"
-                    className="flex items-center gap-2 bg-green-500 hover:bg-green-600"
+                    className="flex items-center gap-2 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700"
                   >
                     <Download size={14} />
                     Download {message.filename}
@@ -104,7 +103,7 @@ const ChatMessage = ({ message, isLatest = false }: ChatMessageProps) => {
           </div>
         </div>
         
-        <div className={`text-xs text-gray-500 mt-1 ${isBot ? 'text-left' : 'text-right'}`}>
+        <div className={`text-xs text-gray-500 dark:text-gray-400 mt-1 ${isBot ? 'text-left' : 'text-right'}`}>
           {new Date(message.timestamp).toLocaleTimeString([], { 
             hour: '2-digit', 
             minute: '2-digit' 
@@ -114,7 +113,7 @@ const ChatMessage = ({ message, isLatest = false }: ChatMessageProps) => {
       
       {!isBot && (
         <div className="flex-shrink-0 ml-2 order-2">
-          <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+          <div className="w-8 h-8 bg-blue-500 dark:bg-blue-600 rounded-full flex items-center justify-center">
             <User size={16} className="text-white" />
           </div>
         </div>
@@ -122,8 +121,8 @@ const ChatMessage = ({ message, isLatest = false }: ChatMessageProps) => {
       
       {isBot && (
         <div className="flex-shrink-0 mr-2 order-1">
-          <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-            <Bot size={16} className="text-blue-500" />
+          <div className="w-8 h-8 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center">
+            <Bot size={16} className="text-blue-500 dark:text-blue-400" />
           </div>
         </div>
       )}
