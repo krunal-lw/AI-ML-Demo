@@ -11,6 +11,8 @@ import pandas as pd
 from fpdf import FPDF
 from langchain import hub
 from langchain.agents import create_react_agent, AgentExecutor
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.schema import HumanMessage, AIMessage
 import mysql.connector
 from decimal import Decimal
 from datetime import date, datetime
@@ -27,11 +29,50 @@ CORS(app)
 llm = GoogleGenerativeAI(model="gemini-2.0-flash")
 chat_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
 
-# Store chat sessions
+# Initialize Memory for each session
+session_memories: Dict[str, ConversationBufferWindowMemory] = {}
+
+def get_or_create_memory(session_id: str) -> ConversationBufferWindowMemory:
+    """Get or create memory for a session"""
+    if session_id not in session_memories:
+        session_memories[session_id] = ConversationBufferWindowMemory(
+            k=10,  # Keep last 10 messages
+            memory_key="chat_history",
+            return_messages=True
+        )
+    return session_memories[session_id]
+
+def add_to_memory(session_id: str, user_message: str, ai_response: str):
+    """Add conversation to memory"""
+    memory = get_or_create_memory(session_id)
+    memory.chat_memory.add_user_message(user_message)
+    memory.chat_memory.add_ai_message(ai_response)
+
+def get_memory_context(session_id: str) -> str:
+    """Get formatted memory context for prompts"""
+    memory = get_or_create_memory(session_id)
+    messages = memory.chat_memory.messages
+    
+    if not messages:
+        return "This is the start of the conversation."
+    
+    formatted = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            formatted.append(f"Human: {msg.content}")
+        elif isinstance(msg, AIMessage):
+            formatted.append(f"Assistant: {msg.content}")
+    
+    return "\n".join(formatted)
+
+# Store chat sessions (keeping for compatibility)
 chat_sessions: Dict[str, List[Dict]] = {}
 
-# SQL Query Templates
+# SQL Query Templates with Memory Integration
 template_1 = '''
+Previous conversation context:
+{memory_context}
+
 Based on the table schema below, write a SQL query according to MYSQL server that would answer the user's question.
 You are using MYSQL server so use function of it appropriately.
 
@@ -42,6 +83,9 @@ SQL Query:
 prompt_1 = ChatPromptTemplate.from_template(template_1)
 
 template_2 = '''
+Previous conversation context:
+{memory_context}
+
 Based on the table schema below, write a SQL query according to MYSQL server that would answer the user's question.
 You are using MYSQL server so use function of it appropriately. If you have error in sql query so answer it simply like "That's an interesting question! Unfortunately, I don't have data on that" with a helpful response.
 
@@ -53,15 +97,19 @@ SQL Response:{response}
 prompt_2 = ChatPromptTemplate.from_template(template_2)
 
 template_3 = '''
+Previous conversation context:
+{memory_context}
+
 Based on below SQL response generate natural language answer for user for this {question}. 
 If you don't have SQL query simply answer that "That's an interesting question! Unfortunately, I don't have data on that" with a helpful response.
 Always be conversational and friendly in your response.
+Use the conversation context to provide more personalized responses.
 
 SQL Response:{response}
 '''
 prompt_3 = ChatPromptTemplate.from_template(template_3)
 
-# Chatbot Template
+# Chatbot Template with Memory
 chatbot_template = '''
 You are an intelligent Office Management Assistant chatbot. You can help with:
 
@@ -77,9 +125,10 @@ Always try to extract employee IDs if mentioned — they will start with 'LWE' o
 - If user asks for something you can't do, politely explain and offer alternatives
 - Always maintain context from previous messages in the conversation
 - Be helpful and provide clear, actionable responses
+- Use the conversation history to provide more personalized and contextual responses
 
-Current conversation context:
-{chat_history}
+Previous conversation history:
+{memory_context}
 
 User Message: {user_message}
 Assistant Response:
@@ -112,27 +161,49 @@ def run_query(query):
 db_uri = 'mysql+mysqlconnector://root:root@localhost:3306/officemgt'
 db = SQLDatabase.from_uri(db_uri)
 
-# Initialize the chains
-sql_chain = (
-    RunnablePassthrough.assign(schema=get_schema)
-    | prompt_1
-    | llm.bind(stop=["\nSQLResult:"]) 
-    | StrOutputParser()
-)
+# Modified chains with memory integration
+def create_sql_chain_with_memory(session_id: str):
+    """Create SQL chain with memory context"""
+    return (
+        RunnablePassthrough.assign(
+            schema=get_schema,
+            memory_context=lambda _: get_memory_context(session_id)
+        )
+        | prompt_1
+        | llm.bind(stop=["\nSQLResult:"]) 
+        | StrOutputParser()
+    )
 
-full_chain = (
-    RunnablePassthrough.assign(query=sql_chain).assign(schema=get_schema, response=lambda var: run_query(var['query']))
-    | prompt_2
-    | llm
-)
+def create_full_chain_with_memory(session_id: str):
+    """Create full chain with memory context"""
+    sql_chain = create_sql_chain_with_memory(session_id)
+    return (
+        RunnablePassthrough.assign(
+            query=sql_chain,
+            memory_context=lambda _: get_memory_context(session_id)
+        ).assign(
+            schema=get_schema, 
+            response=lambda var: run_query(var['query'])
+        )
+        | prompt_2
+        | llm
+    )
 
-last_chain = (
-    RunnablePassthrough.assign(query=sql_chain)
-    .assign(schema=get_schema)
-    .assign(response=lambda var: run_query(var['query']))
-    | prompt_3
-    | llm
-)
+def create_last_chain_with_memory(session_id: str):
+    """Create final chain with memory context"""
+    sql_chain = create_sql_chain_with_memory(session_id)
+    return (
+        RunnablePassthrough.assign(
+            query=sql_chain,
+            memory_context=lambda _: get_memory_context(session_id)
+        )
+        .assign(
+            schema=get_schema,
+            response=lambda var: run_query(var['query'])
+        )
+        | prompt_3
+        | llm
+    )
 
 def clean_employee_details(text):
     # Remove introductory/closing lines and special characters
@@ -147,7 +218,7 @@ def clean_employee_details(text):
     return ' '.join(cleaned_lines)
 
 def format_chat_history(messages: List[Dict]) -> str:
-    """Format chat history for context"""
+    """Format chat history for context (legacy support)"""
     if not messages:
         return "This is the start of the conversation."
     
@@ -159,7 +230,7 @@ def format_chat_history(messages: List[Dict]) -> str:
     
     return "\n".join(formatted)
 
-# PDF Generation Classes and Functions
+# PDF Generation Classes and Functions (keeping existing code)
 class SalarySlipPDF(FPDF):
     def __init__(self, logo_path='image.png'):
         super().__init__()
@@ -458,8 +529,11 @@ def generate_custom_salary_slip(emp_id, month_year="MAY 2025"):
 # Initialize agent for salary slip generation
 tools = [generate_custom_salary_slip]
 prompt_template = hub.pull("hwchase17/react")
-agent = create_react_agent(chat_llm, tools, prompt_template)
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+def create_agent_with_memory(session_id: str):
+    """Create agent with memory context"""
+    agent = create_react_agent(chat_llm, tools, prompt_template)
+    return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
 def determine_intent(message: str) -> str:
     """Determine user intent from message"""
@@ -481,11 +555,11 @@ def determine_intent(message: str) -> str:
 def process_user_message(session_id: str, user_message: str) -> Dict:
     """Process user message and return appropriate response"""
     
-    # Initialize session if not exists
+    # Initialize session if not exists (for compatibility)
     if session_id not in chat_sessions:
         chat_sessions[session_id] = []
     
-    # Add user message to history
+    # Add user message to legacy session (for compatibility)
     chat_sessions[session_id].append({
         'role': 'user',
         'content': user_message,
@@ -497,8 +571,19 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
     
     try:
         if intent == 'salary_slip':
-            # Use agent for salary slip generation
-            result = agent_executor.invoke({"input": user_message})
+            # Create agent with memory context
+            memory_context = get_memory_context(session_id)
+            agent_executor = create_agent_with_memory(session_id)
+            
+            # Add memory context to the input
+            enhanced_input = f"""
+            Previous conversation context:
+            {memory_context}
+            
+            Current request: {user_message}
+            """
+            
+            result = agent_executor.invoke({"input": enhanced_input})
             response_text = result.get('output', 'I encountered an issue generating the salary slip.')
             
             # Check if PDF was generated
@@ -513,8 +598,12 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
                 'download_url': f'/api/download/{filename_match.group(0)}' if filename_match else None
             }
             
+            # Add to memory
+            add_to_memory(session_id, user_message, response_text)
+            
         elif intent == 'employee_info':
-            # Use SQL chain for employee information
+            # Use SQL chain with memory for employee information
+            last_chain = create_last_chain_with_memory(session_id)
             result = last_chain.invoke({'question': user_message})
             cleaned_result = clean_employee_details(result)
             
@@ -524,24 +613,32 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
                 'file_generated': False
             }
             
+            # Add to memory
+            add_to_memory(session_id, user_message, cleaned_result)
+            
         else:
-            # General conversation
-            chat_history = format_chat_history(chat_sessions[session_id][:-1])  # Exclude current message
+            # General conversation with memory
+            memory_context = get_memory_context(session_id)
             
             general_response = chat_llm.invoke(
                 chatbot_prompt.format(
-                    chat_history=chat_history,
+                    memory_context=memory_context,
                     user_message=user_message
                 )
             )
             
+            response_content = general_response.content if hasattr(general_response, 'content') else str(general_response)
+            
             response = {
-                'message': general_response.content if hasattr(general_response, 'content') else str(general_response),
+                'message': response_content,
                 'type': 'general',
                 'file_generated': False
             }
+            
+            # Add to memory
+            add_to_memory(session_id, user_message, response_content)
         
-        # Add assistant response to history
+        # Add assistant response to legacy session (for compatibility)
         chat_sessions[session_id].append({
             'role': 'assistant',
             'content': response['message'],
@@ -552,11 +649,15 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
         return response
         
     except Exception as e:
+        error_message = f"I'm sorry, I encountered an error: {str(e)}. Please try again or rephrase your question."
         error_response = {
-            'message': f"I'm sorry, I encountered an error: {str(e)}. Please try again or rephrase your question.",
+            'message': error_message,
             'type': 'error',
             'file_generated': False
         }
+        
+        # Add error to memory
+        add_to_memory(session_id, user_message, error_message)
         
         chat_sessions[session_id].append({
             'role': 'assistant',
@@ -591,8 +692,32 @@ def chat():
 def get_chat_history(session_id):
     """Get chat history for a session"""
     try:
-        history = chat_sessions.get(session_id, [])
-        return jsonify({'history': history, 'session_id': session_id})
+        # Get from memory
+        memory = get_or_create_memory(session_id)
+        memory_messages = []
+        
+        for msg in memory.chat_memory.messages:
+            if isinstance(msg, HumanMessage):
+                memory_messages.append({
+                    'role': 'user',
+                    'content': msg.content,
+                    'timestamp': datetime.now().isoformat()
+                })
+            elif isinstance(msg, AIMessage):
+                memory_messages.append({
+                    'role': 'assistant',
+                    'content': msg.content,
+                    'timestamp': datetime.now().isoformat()
+                })
+        
+        # Fallback to legacy session for compatibility
+        legacy_history = chat_sessions.get(session_id, [])
+        
+        return jsonify({
+            'memory_history': memory_messages,
+            'legacy_history': legacy_history,
+            'session_id': session_id
+        })
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -601,8 +726,14 @@ def get_chat_history(session_id):
 def clear_chat_history(session_id):
     """Clear chat history for a session"""
     try:
+        # Clear memory
+        if session_id in session_memories:
+            session_memories[session_id].clear()
+        
+        # Clear legacy session
         if session_id in chat_sessions:
             del chat_sessions[session_id]
+            
         return jsonify({'message': 'Chat history cleared', 'session_id': session_id})
     
     except Exception as e:
@@ -616,27 +747,6 @@ def download_file(filename):
             return send_file(filename, as_attachment=True)
         else:
             return jsonify({'error': 'File not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# Legacy endpoints for backward compatibility
-@app.route('/api/query', methods=['POST'])
-def process_query():
-    """Legacy SQL query endpoint"""
-    try:
-        data = request.json
-        user_question = data.get('question')
-        
-        if not user_question:
-            return jsonify({'error': 'No question provided'}), 400
-        
-        result = last_chain.invoke({'question': user_question})
-        
-        return jsonify({
-            'final_answer': clean_employee_details(result),
-            'question': user_question
-        })
-    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
