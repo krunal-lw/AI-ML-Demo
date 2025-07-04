@@ -1,3 +1,135 @@
+# from langchain_google_genai import ChatGoogleGenerativeAI
+# from dotenv import load_dotenv
+# from langchain import hub
+# from langchain.agents import create_react_agent, AgentExecutor
+# import datetime
+# from langchain.agents import tool
+# from langchain.memory import ConversationSummaryMemory
+# from langchain.schema import HumanMessage, AIMessage
+
+# load_dotenv()
+
+# @tool
+# def get_system_time(format: str = "%Y-%m-%d %H:%M:%S"):
+#     """ Returns the current date and time in the specified format """
+#     current_time = datetime.datetime.now()
+#     formatted_time = current_time.strftime(format)
+#     return formatted_time
+
+# class ChatbotWithSummaryMemory:
+#     def __init__(self):
+#         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+#         self.memory = ConversationSummaryMemory(
+#             llm=self.llm,
+#             memory_key="chat_history",
+#             return_messages=True
+#         )
+#         self.tools = [get_system_time]
+    
+#     def get_summary(self):
+#         """Get the current conversation summary - force generation if empty"""
+#         # If buffer is empty but we have messages, generate summary
+#         if (not self.memory.buffer or self.memory.buffer.strip() == "") and self.memory.chat_memory.messages:
+#             # Force summary generation
+#             messages = self.memory.chat_memory.messages
+#             self.memory.buffer = self.memory.predict_new_summary(messages, "")
+        
+#         return self.memory.buffer
+    
+#     def force_summarize(self):
+#         """Manually force a summary of current conversation"""
+#         if self.memory.chat_memory.messages:
+#             messages = self.memory.chat_memory.messages
+#             self.memory.buffer = self.memory.predict_new_summary(messages, self.memory.buffer or "")
+#             print(f"🔄 Forced summary generation: {self.memory.buffer}")
+#         else:
+#             print("No messages to summarize")
+    
+#     def chat(self, user_input):
+#         # Get current state
+#         history = self.memory.chat_memory.messages
+#         summary = self.memory.buffer
+        
+#         prompt = f"""
+#         Conversation summary: {summary}
+        
+#         Recent conversation:
+#         {self._format_history(history)}
+        
+#         Current user input: {user_input}
+        
+#         You are a helpful assistant. Use the conversation context to provide relevant responses.
+#         """
+        
+#         agent_prompt = hub.pull("hwchase17/react")
+#         agent = create_react_agent(self.llm, self.tools, agent_prompt)
+#         agent_executor = AgentExecutor(agent=agent, tools=self.tools, verbose=True)
+        
+#         result = agent_executor.invoke({"input": prompt})
+        
+#         # Save to memory
+#         self.memory.chat_memory.add_user_message(user_input)
+#         self.memory.chat_memory.add_ai_message(result["output"])
+        
+#         # Force summary after every few interactions
+#         if len(self.memory.chat_memory.messages) >= 4:  # Summarize after 4 messages
+#             self.force_summarize()
+        
+#         return result["output"]
+    
+#     def _format_history(self, messages):
+#         formatted = ""
+#         for msg in messages[-6:]:
+#             if isinstance(msg, HumanMessage):
+#                 formatted += f"Human: {msg.content}\n"
+#             elif isinstance(msg, AIMessage):
+#                 formatted += f"Assistant: {msg.content}\n"
+#         return formatted
+
+# def run_chat_loop(chatbot, name):
+#     print(f"\n=== {name} ===")
+#     print("Type 'quit' to exit, 'summary' to show current summary, 'force' to force summarization")
+    
+#     while True:
+#         user_input = input("\nYou: ")
+        
+#         if user_input.lower() == 'quit':
+#             break
+#         elif user_input.lower() == 'summary':
+#             current_summary = chatbot.get_summary()
+#             print(f"\n📋 Current Summary: '{current_summary}'")
+#             continue
+#         elif user_input.lower() == 'force':
+#             chatbot.force_summarize()
+#             continue
+        
+#         try:
+#             response = chatbot.chat(user_input)
+#             print(f"Assistant: {response}")
+            
+#             # Show summary after each response
+#             current_summary = chatbot.get_summary()
+#             if current_summary and current_summary.strip():
+#                 print(f"\n📋 Summary: {current_summary}")
+#             else:
+#                 print(f"\n📋 Summary: (empty - {len(chatbot.memory.chat_memory.messages)} messages so far)")
+            
+#         except Exception as e:
+#             print(f"Error: {e}")
+    
+#     # Print final summary
+#     final_summary = chatbot.get_summary()
+#     print(f"\n=== FINAL CONVERSATION SUMMARY ===")
+#     print(f"Summary: '{final_summary}'")
+#     print("=== END FINAL SUMMARY ===")
+
+# if __name__ == "__main__":
+#     print("\n=== Summary Memory Chatbot ===")
+#     chatbot2 = ChatbotWithSummaryMemory()
+#     run_chat_loop(chatbot2, "Summary Memory Chatbot")
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------
 from langchain_google_genai import GoogleGenerativeAI, ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from langchain_community.utilities import SQLDatabase
@@ -7,124 +139,165 @@ from langchain.prompts import ChatPromptTemplate
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS 
 from langchain.tools import tool
-import pandas as pd
 from fpdf import FPDF
 from langchain import hub
 from langchain.agents import create_react_agent, AgentExecutor
-from langchain.memory import ConversationBufferWindowMemory
+from langchain.memory import ConversationSummaryMemory 
 from langchain.schema import HumanMessage, AIMessage
 import mysql.connector
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from decimal import Decimal
 from datetime import date, datetime
 import os
 import uuid
 from typing import Dict, List
 import re
+from langchain.memory import ConversationSummaryMemory
+
 
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
-
-# Initialize LLMs
-llm = GoogleGenerativeAI(model="gemini-2.0-flash")
-chat_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+request_context = {}
+ 
+llm = GoogleGenerativeAI(model="gemini-2.5-flash")
+chat_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
 # Initialize Memory for each session
-session_memories: Dict[str, ConversationBufferWindowMemory] = {}
+session_memories: Dict[str, ConversationSummaryMemory] = {}
 
-def get_or_create_memory(session_id: str) -> ConversationBufferWindowMemory:
+def get_or_create_memory(session_id: str) -> ConversationSummaryMemory:
     """Get or create memory for a session"""
     if session_id not in session_memories:
-        session_memories[session_id] = ConversationBufferWindowMemory(
-            k=10,  # Keep last 10 messages
+        session_memories[session_id] = ConversationSummaryMemory(
+            llm=llm,
             memory_key="chat_history",
             return_messages=True
         )
     return session_memories[session_id]
 
 def add_to_memory(session_id: str, user_message: str, ai_response: str):
-    """Add conversation to memory"""
+    """Add conversation to memory and force summary generation"""
     memory = get_or_create_memory(session_id)
     memory.chat_memory.add_user_message(user_message)
     memory.chat_memory.add_ai_message(ai_response)
+    
+    # Force summary generation after every 4 messages
+    if len(memory.chat_memory.messages) >= 4:
+        force_summarize_memory(session_id)
+
+def force_summarize_memory(session_id: str):
+    """Force summary generation for a session"""
+    memory = get_or_create_memory(session_id)
+    if memory.chat_memory.messages:
+        messages = memory.chat_memory.messages
+        # Force summary generation
+        memory.buffer = memory.predict_new_summary(messages, memory.buffer or "")
+        print(f"🔄 Generated summary for session {session_id}: {memory.buffer}")
+
+def get_memory_summary(session_id: str) -> str:
+    """Get the conversation summary for a session"""
+    memory = get_or_create_memory(session_id)
+                          
+    # If buffer is empty but we have messages, force generate summary
+    if (not memory.buffer or memory.buffer.strip() == "") and memory.chat_memory.messages:
+        force_summarize_memory(session_id)
+    
+    return memory.buffer or "No conversation summary yet."
 
 def get_memory_context(session_id: str) -> str:
-    """Get formatted memory context for prompts"""
+    """Get formatted memory context for prompts including summary"""
     memory = get_or_create_memory(session_id)
     messages = memory.chat_memory.messages
+    summary = get_memory_summary(session_id)
     
     if not messages:
         return "This is the start of the conversation."
     
+    # Include summary in context
+    context = f"Conversation Summary: {summary}\n\nRecent Messages:\n"
+    
+    # Get last 6 messages for recent context
     formatted = []
-    for msg in messages:
+    for msg in messages[-6:]:
         if isinstance(msg, HumanMessage):
             formatted.append(f"Human: {msg.content}")
         elif isinstance(msg, AIMessage):
             formatted.append(f"Assistant: {msg.content}")
     
-    return "\n".join(formatted)
+    context += "\n".join(formatted)
+    return context
 
 # Store chat sessions (keeping for compatibility)
 chat_sessions: Dict[str, List[Dict]] = {}
+AUTHORIZED_EMAILS = ['kaushal.bhojani@logicalwings.com', 'pratik@logicalwings.com']
 
-# SQL Query Templates with Memory Integration
-template_1 = '''
-Previous conversation context:
-{memory_context}
+def authorized_email(email):
+    print(email)
+    if email not in AUTHORIZED_EMAILS:
+        print('employee')
 
-Based on the table schema below, write a SQL query according to MYSQL server that would answer the user's question.
-You are using MYSQL server so use function of it appropriately.
+        template_1 = '''
+        You are a MySQL query generator. Follow these STRICT rules:
 
-{schema}
-Question: {question}
-SQL Query:
-'''
-prompt_1 = ChatPromptTemplate.from_template(template_1)
+        CRITICAL REQUIREMENTS:
+        1. Current user email: {email}
+        2. Access Control Rules:
+            a) Include a WHERE clause for email in EVERY query
 
-template_2 = '''
-Previous conversation context:
-{memory_context}
+        QUERY REQUIREMENTS:
+        - Generate only valid MySQL syntax
+        - Use appropriate MySQL functions
+        - Never expose email addresses in query results
+        - Return only the SQL query, no explanations
 
-Based on the table schema below, write a SQL query according to MYSQL server that would answer the user's question.
-You are using MYSQL server so use function of it appropriately. If you have error in sql query so answer it simply like "That's an interesting question! Unfortunately, I don't have data on that" with a helpful response.
+        Table Schema:
+        {schema}
 
-{schema}
-Question: {question}
-SQL Query:{query}
-SQL Response:{response}
-'''
-prompt_2 = ChatPromptTemplate.from_template(template_2)
+        User Question: {question}
+
+        Generate MySQL Query:
+        '''
+        
+    else:
+        print('admin')
+        template_1 = '''
+    Based on the table schema below, write a SQL query according to MYSQL server that would answer the user's question.
+    you are using MYSQL server so use function of it appropriately
+    always use employee code in where clause for each employee
+
+    {schema}
+    Question: {question}
+    SQL Query:
+        '''
+    prompt_1 = ChatPromptTemplate.from_template(template_1)
+    return prompt_1
 
 template_3 = '''
 Previous conversation context:
 {memory_context}
-
+please provide answer in user's message language
 Based on below SQL response generate natural language answer for user for this {question}. 
 If you don't have SQL query simply answer that "That's an interesting question! Unfortunately, I don't have data on that" with a helpful response.
+provide clear and short answer
 Always be conversational and friendly in your response.
+
 Use the conversation context to provide more personalized responses.
 
 SQL Response:{response}
 '''
 prompt_3 = ChatPromptTemplate.from_template(template_3)
 
-# Chatbot Template with Memory
 chatbot_template = '''
+please provide answer in user's message language
+
 You are an intelligent Office Management Assistant chatbot. You can help with:
-
-1. **Employee Information**: Answer questions about employee details, salaries, departments, etc.
-2. **Salary Slip Generation**: Generate and provide salary slips for employees
-3. **General Office Queries**: Help with various office management tasks
-
 Instructions:
 - Be conversational, friendly, and professional
-- If user asks about employee information, use the SQL database to find answers
 - If user requests salary slip generation, use the salary slip tool
-Always try to extract employee IDs if mentioned — they will start with 'LWE' or ADMIN.
 - If user asks for something you can't do, politely explain and offer alternatives
 - Always maintain context from previous messages in the conversation
-- Be helpful and provide clear, actionable responses
+- Be helpful and provide clear and short answer
 - Use the conversation history to provide more personalized and contextual responses
 
 Previous conversation history:
@@ -164,10 +337,12 @@ db = SQLDatabase.from_uri(db_uri)
 # Modified chains with memory integration
 def create_sql_chain_with_memory(session_id: str):
     """Create SQL chain with memory context"""
+    prompt_1 = authorized_email(request_context.get('email', ''))
     return (
         RunnablePassthrough.assign(
             schema=get_schema,
-            memory_context=lambda _: get_memory_context(session_id)
+            memory_context=lambda _: get_memory_context(session_id),
+            email=lambda _: request_context.get('email', '')        
         )
         | prompt_1
         | llm.bind(stop=["\nSQLResult:"]) 
@@ -182,24 +357,7 @@ def create_full_chain_with_memory(session_id: str):
             query=sql_chain,
             memory_context=lambda _: get_memory_context(session_id)
         ).assign(
-            schema=get_schema, 
-            response=lambda var: run_query(var['query'])
-        )
-        | prompt_2
-        | llm
-    )
-
-def create_last_chain_with_memory(session_id: str):
-    """Create final chain with memory context"""
-    sql_chain = create_sql_chain_with_memory(session_id)
-    return (
-        RunnablePassthrough.assign(
-            query=sql_chain,
-            memory_context=lambda _: get_memory_context(session_id)
-        )
-        .assign(
-            schema=get_schema,
-            response=lambda var: run_query(var['query'])
+            response=lambda var: run_query(var['query'])            
         )
         | prompt_3
         | llm
@@ -217,6 +375,7 @@ def clean_employee_details(text):
     # Join with single spaces instead of newlines
     return ' '.join(cleaned_lines)
 
+
 def format_chat_history(messages: List[Dict]) -> str:
     """Format chat history for context (legacy support)"""
     if not messages:
@@ -230,7 +389,6 @@ def format_chat_history(messages: List[Dict]) -> str:
     
     return "\n".join(formatted)
 
-# PDF Generation Classes and Functions (keeping existing code)
 class SalarySlipPDF(FPDF):
     def __init__(self, logo_path='image.png'):
         super().__init__()
@@ -398,14 +556,14 @@ class SalarySlipPDF(FPDF):
         self.cell(0, 6, "*** This is a computer-generated salary slip and does not require a", 0, 1, 'C')
         self.cell(0, 6, "physical signature. ***", 0, 1, 'C')
 
+
 @tool
-def generate_custom_salary_slip(emp_id, month_year="MAY 2025"):
+def generate_custom_salary_slip(emp_id):
     """
     Always try to extract employee IDs if mentioned — they will start with 'LWE' or 'ADMIN'
     Generate a salary slip with employee details and salary details.
     Args:
         emp_id (str): ID of the employee start With LWE or ADMIN
-        month_year (str): Month and year for the salary slip (default: "MAY 2025")
     
     Returns:
         str: Filename of the generated PDF or error message
@@ -446,10 +604,19 @@ def generate_custom_salary_slip(emp_id, month_year="MAY 2025"):
         LEFT JOIN salaryslip AS SS ON E.ID = SS.EmpID
         WHERE E.EmployeeCode = %s
         '''
+        params = []
         pattern = r'\b(?:LWE|ADMIN)\d+\b'
         matches = re.findall(pattern, emp_id, re.IGNORECASE)
-        print(matches)
-        cursor.execute(query, (matches[0],))
+        params.append(matches[0])
+        requester_email = request_context.get('email', '')
+        print(requester_email)
+        if requester_email.lower() not in ['kaushal.bhojani@logicalwings.com' , 'pratik@logicalwings.com']:
+            query += 'and E.Companyemail = %s'
+
+            params.append(requester_email)
+
+        # print(matches)
+        cursor.execute(query, params)
         result = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -478,7 +645,7 @@ def generate_custom_salary_slip(emp_id, month_year="MAY 2025"):
             return cleaned_values
         
         if not result:
-            return f"No employee found with ID: {emp_id}"
+            return f"Access denied, You can not Generate other employee's Salary Slip 😉"
         
         final_ans = format_sql_result_row(result)
 
@@ -515,9 +682,9 @@ def generate_custom_salary_slip(emp_id, month_year="MAY 2025"):
         }
 
         pdf = SalarySlipPDF()
-        pdf.create_salary_slip(custom_employee, custom_salary, month_year)
-        
-        output_filename = f"salary_slip_{matches[0]}_{month_year.lower().replace(' ', '_')}.pdf"
+        pdf.create_salary_slip(custom_employee, custom_salary,month_year= "MAY 2025")
+    
+        output_filename = f"salary_slip_{matches[0]}.pdf"
         pdf.output(output_filename)
         print(f"Custom salary slip generated: {output_filename}")
         
@@ -526,31 +693,53 @@ def generate_custom_salary_slip(emp_id, month_year="MAY 2025"):
     except Exception as e:
         return f"Error generating salary slip: {str(e)}"
 
-# Initialize agent for salary slip generation
 tools = [generate_custom_salary_slip]
 prompt_template = hub.pull("hwchase17/react")
 
 def create_agent_with_memory(session_id: str):
     """Create agent with memory context"""
-    agent = create_react_agent(chat_llm, tools, prompt_template)
+    agent = create_react_agent(llm, tools, prompt_template)
     return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
-def determine_intent(message: str) -> str:
+def get_session_summary(session_id: str) -> Dict:
+    """Get session summary and statistics"""
+    memory = get_or_create_memory(session_id)
+    summary = get_memory_summary(session_id)
+    
+    return {
+        'session_id': session_id,
+        'summary': summary,
+        'message_count': len(memory.chat_memory.messages),
+        'has_summary': bool(summary and summary.strip())
+    }
+
+def determine_intent(message: str , session_id: str):
     """Determine user intent from message"""
     message_lower = message.lower()
     
-    # Salary slip generation keywords
-    salary_keywords = ['salary slip', 'payslip', 'pay slip', 'generate salary', 'create salary', 'salary pdf']
-    if any(keyword in message_lower for keyword in salary_keywords):
-        return 'salary_slip'
-    
-    # Employee information keywords
-    employee_keywords = ['employee', 'salary', 'department', 'designation', 'details', 'information', 'who is', 'what is', 'how much', 'when did']
-    if any(keyword in message_lower for keyword in employee_keywords):
-        return 'employee_info'
-    
-    # Default to general chat
-    return 'general'
+    intent_templet ="""
+
+                     Previous conversation context:
+                        {memory_context}
+                        You are an AI assistant that determines the intent behind a user's question.
+
+                There are three possible intents:
+                1. salary_slip_generation → If the question is about generating or creating salary slips.
+                2. employee_from_mysql → If the question is about retrieving or interacting with employee data from a MySQL database. if question like what is my name,what is my mobile number , what is my address this all type question fall into this category
+                3. general_question → If the question doesn't match the above categories and is more general.
+
+                Classify the following user question into one of these three intents. 
+                Only return the intent name (e.g., salary_slip_generation, employee_from_mysql, general_question) as output.
+
+                User Question: "{user_question}"
+
+                    Intent:
+                    """
+    intent = ChatPromptTemplate.from_template(intent_templet)
+    result = llm.invoke(intent.format(memory_context=get_memory_context(session_id) , user_question=message_lower))
+    response_content = result.content if hasattr(result, 'content') else str(result)
+    return response_content
+
 
 def process_user_message(session_id: str, user_message: str) -> Dict:
     """Process user message and return appropriate response"""
@@ -566,11 +755,15 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
         'timestamp': datetime.now().isoformat()
     })
     
+    # Print current session summary for debugging
+    session_info = get_session_summary(session_id)
+    print(f"📋 Session Info: {session_info}")
+    
     # Determine intent
-    intent = determine_intent(user_message)
+    intent = determine_intent(user_message, session_id)
     
     try:
-        if intent == 'salary_slip':
+        if intent == 'salary_slip_generation':
             # Create agent with memory context
             memory_context = get_memory_context(session_id)
             agent_executor = create_agent_with_memory(session_id)
@@ -588,29 +781,33 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
             
             # Check if PDF was generated
             import re
-            filename_match = re.search(r'salary_slip_\w+_[\w_]+\.pdf', response_text)
+            filename_match = re.search(r'salary_slip[\w_]+\.pdf', response_text)
             
             response = {
                 'message': response_text,
                 'type': 'salary_slip',
                 'file_generated': bool(filename_match),
                 'filename': filename_match.group(0) if filename_match else None,
-                'download_url': f'/api/download/{filename_match.group(0)}' if filename_match else None
+                'download_url': f'/api/download/{filename_match.group(0)}' if filename_match else None,
+                'session_summary': get_memory_summary(session_id)
             }
             
             # Add to memory
             add_to_memory(session_id, user_message, response_text)
             
-        elif intent == 'employee_info':
+        elif intent == 'employee_from_mysql':
             # Use SQL chain with memory for employee information
-            last_chain = create_last_chain_with_memory(session_id)
+            last_chain = create_full_chain_with_memory(session_id)
             result = last_chain.invoke({'question': user_message})
             cleaned_result = clean_employee_details(result)
+            sql = create_sql_chain_with_memory(session_id).invoke({'question': user_message})
             
             response = {
+                'sql': sql,
                 'message': cleaned_result,
                 'type': 'employee_info',
-                'file_generated': False
+                'file_generated': False,
+                'session_summary': get_memory_summary(session_id)
             }
             
             # Add to memory
@@ -632,7 +829,8 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
             response = {
                 'message': response_content,
                 'type': 'general',
-                'file_generated': False
+                'file_generated': False,
+                'session_summary': get_memory_summary(session_id)
             }
             
             # Add to memory
@@ -646,6 +844,10 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
             'type': response['type']
         })
         
+        # Print final session summary after processing
+        final_session_info = get_session_summary(session_id)
+        print(f"📋 Final Session Info: {final_session_info}")
+        
         return response
         
     except Exception as e:
@@ -653,7 +855,8 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
         error_response = {
             'message': error_message,
             'type': 'error',
-            'file_generated': False
+            'file_generated': False,
+            'session_summary': get_memory_summary(session_id)
         }
         
         # Add error to memory
@@ -668,7 +871,21 @@ def process_user_message(session_id: str, user_message: str) -> Dict:
         
         return error_response
 
-# API Routes
+# Additional utility functions
+def clear_session_memory(session_id: str):
+    """Clear memory for a specific session"""
+    if session_id in session_memories:
+        del session_memories[session_id]
+        print(f"Cleared memory for session {session_id}")
+
+def get_all_session_summaries() -> Dict:
+    """Get summaries for all active sessions"""
+    summaries = {}
+    for session_id in session_memories:
+        summaries[session_id] = get_session_summary(session_id)
+    return summaries
+
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     """Main chatbot endpoint"""
@@ -676,6 +893,8 @@ def chat():
         data = request.json
         user_message = data.get('message', '').strip()
         session_id = data.get('session_id', str(uuid.uuid4()))
+        email = data.get('email')
+        request_context['email'] = email
         
         if not user_message:
             return jsonify({'error': 'No message provided'}), 400
@@ -744,7 +963,7 @@ def download_file(filename):
     """Download generated files"""
     try:
         if os.path.exists(filename):
-            return send_file(filename, as_attachment=True)
+            return send_file(filename)
         else:
             return jsonify({'error': 'File not found'}), 404
     except Exception as e:
@@ -764,7 +983,7 @@ def generate_salary_slip_api():
         output_text = result.get('output', '')
         
         import re
-        filename_match = re.search(r'salary_slip_\w+_[\w_]+\.pdf', output_text)
+        filename_match = re.search(r'salary_slip_[\w_]+\.pdf', output_text)
         
         if filename_match:
             filename = filename_match.group(0)
