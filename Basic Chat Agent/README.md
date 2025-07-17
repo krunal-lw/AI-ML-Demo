@@ -33,7 +33,7 @@ pip install -r requirements.txt
 ```
 ### 4. create .env file in root directory
 ```bash
-OPENAI_API_KEY=your_api_key
+GOOGLE_API_KEY=your_api_key
 GOOGLE_APPLICATION_CREDENTIALS = path_to_your_credentials.json
 ```
 ### 5. How to download credentials.json file and and copy api key
